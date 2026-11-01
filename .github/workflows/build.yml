@@ -1,0 +1,52 @@
+name: Build APK from zip
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unzip project
+        run: |
+          mkdir work
+          unzip -q MicBridge_project.zip -d work
+          DIR=$(dirname "$(find work -name settings.gradle.kts | head -1)")
+          echo "PROJECT_DIR=$DIR" >> $GITHUB_ENV
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+
+      - name: Build APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: gradle assembleDebug --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MicBridge-apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp "$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk" MicBridge.apk
+          FILES=(MicBridge.apk)
+          for f in *.mcaddon; do [ -e "$f" ] && FILES+=("$f"); done
+          gh release create "v1.0.${{ github.run_number }}" "${FILES[@]}" \
+            --title "MicBridge v1.0.${{ github.run_number }}" --generate-notes
