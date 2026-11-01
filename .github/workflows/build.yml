@@ -1,4 +1,4 @@
-name: Build APK from zip
+name: Build signed APK from zip
 
 on:
   push:
@@ -33,20 +33,39 @@ jobs:
         with:
           gradle-version: 8.7
 
-      - name: Build APK
+      - name: Build release APK (unsigned)
         working-directory: ${{ env.PROJECT_DIR }}
-        run: gradle assembleDebug --no-daemon
+        run: gradle assembleRelease --no-daemon
+
+      - name: Sign APK
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          UNSIGNED=$(find "$PROJECT_DIR/app/build/outputs/apk/release" -name "*.apk" | head -1)
+          "$BT/zipalign" -p -f 4 "$UNSIGNED" aligned.apk
+          "$BT/apksigner" sign \
+            --ks "$RUNNER_TEMP/release.jks" \
+            --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass env:KEYSTORE_PASSWORD \
+            --key-pass env:KEY_PASSWORD \
+            --out MicBridge.apk aligned.apk
+          "$BT/apksigner" verify --print-certs MicBridge.apk
+          rm -f "$RUNNER_TEMP/release.jks"
 
       - uses: actions/upload-artifact@v4
         with:
           name: MicBridge-apk
-          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
+          path: MicBridge.apk
 
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp "$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk" MicBridge.apk
           FILES=(MicBridge.apk)
           for f in *.mcaddon; do [ -e "$f" ] && FILES+=("$f"); done
           gh release create "v1.0.${{ github.run_number }}" "${FILES[@]}" \
